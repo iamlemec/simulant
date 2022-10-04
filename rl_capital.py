@@ -1,10 +1,11 @@
 # simple reinforcement learning - capital accumulation
 
 import jax
+import jax.lax as lax
 import jax.numpy as np
 
-from valjax import solve_binary
-from rl_tools import RandomState
+from valjax import solve_binary, interp
+from rl_tools import RandomState, logit, rectify_lower
 
 # random init
 # rs = RandomState(42)
@@ -21,7 +22,7 @@ M = 3 # degree of valfunc polynomial
 z = 0.50 # productivity
 
 # functions
-u = lambda c: np.where(c < ε, (c-ε)/ε+np.log(ε), np.log(c))
+u = rectify_lower(np.log, ε)
 f = lambda k: z*k**α
 up = jax.grad(u)
 fp = jax.grad(f)
@@ -37,32 +38,38 @@ kmax = solve_binary(kmax_obj, 0.01, 100.0)
 # make capital grid
 klo, khi = 0.2*kss, 2*kss
 kgrid = np.linspace(klo, khi, N)
-ypgrid = f(kgrid) + (1-δ)*kgrid
 
 # value function
 def val(k, θ):
     x = (k-kss)**np.arange(M)
-    return np.dot(x, θ)
-val_vec = jax.vmap(val, in_axes=(0, None))
+    return np.sum(x*θ)
 
-# evaluate policy/valfunc pair
-# kp = policy choices on capital grid
-# θ = value function parameters
-def eval_policy(kp, k, θ):
+# evaluate policy level
+def eval_policy(k, kp, θ):
     yp = f(k) + (1-δ)*k
-    return u(yp-kp) + β*val(kp, θ)
-eval_policy_vec = jax.vmap(eval_policy, in_axes=(0, 0, None))
-grad_policy_vec = jax.jit(jax.vmap(jax.grad(eval_policy), in_axes=(0, 0, None)))
+    vp = val(kp, θ)
+    return u(yp-kp) + β*vp
 
+# evaluate valfunc fit
+def eval_value(k, kp, θ):
+    vp = val(k, θ)
+    vn = eval_policy(k, kp, θ)
+    return -(vn-vp)**2
+
+# fast vectorized values
+val_vec = jax.vmap(val, in_axes=(0, None))
+eval_policy_vec = jax.jit(jax.vmap(eval_policy, in_axes=(0, 0, None)))
+eval_value_vec = jax.jit(jax.vmap(eval_value, in_axes=(0, 0, None)))
+
+# fast vectorized grads
+grad_policy_vec = jax.jit(jax.vmap(jax.grad(eval_policy, argnums=1), in_axes=(0, 0, None)))
+grad_value_vec = jax.jit(jax.vmap(jax.grad(eval_value, argnums=2), in_axes=(0, 0, None)))
+
+# applied to kgrid
 def grad_policy_obj(kp, θ):
-    return grad_policy_vec(kp, kgrid, θ)
-
-# evaluate fit of value function projection
-def value_obj(kp, θ):
-    vprev = val_vec(kgrid, θ)
-    vnext = eval_policy_vec(kp, kgrid, θ)
-    return -np.sum((vnext-vprev)**2)
-grad_value_obj = jax.jit(jax.grad(value_obj, argnums=1))
+    return grad_policy_vec(kgrid, kp, θ)
+def grad_value_obj(kp, θ):
+    return grad_value_vec(kgrid, kp, θ).sum(axis=0)
 
 def solve_iterate(R=10, Δk=0.01, Δv=0.01, Kmax=100, Vmax=100):
     # init value function
@@ -71,12 +78,14 @@ def solve_iterate(R=10, Δk=0.01, Δv=0.01, Kmax=100, Vmax=100):
 
     # iterate and optimize
     for i in range(R):
-        # update policy
+        # compute gradients
         kgrad = grad_policy_obj(kpoly, theta)
-        kpoly = np.clip(kpoly + Δk*kgrad, 0, Kmax)
-
-        # update value
         vgrad = grad_value_obj(kpoly, theta)
+
+        # update parameters
+        kpoly = np.clip(kpoly + Δk*kgrad, 0, Kmax)
         theta = np.clip(theta + Δv*vgrad, -Vmax, Vmax)
 
     return kpoly, theta
+
+# HOMOTOPY FROM SIMPLE QUADRATIC PROBLEM????

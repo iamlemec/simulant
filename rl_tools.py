@@ -1,7 +1,24 @@
 # reinforcement learning tools
 
+import jax
+import jax.lax as lax
+import jax.numpy as np
+
 from collections import deque
 from jax import random
+
+def logit(x):
+    return 0.5 * (np.tanh(x / 2) + 1)
+
+def rectify_lower(f, ε):
+    df = jax.grad(f)
+    fε, dε = f(ε), df(ε)
+    def f1(x):
+        return lax.cond(x < ε,
+            lambda: (x-ε)*dε + fε,
+            lambda: f(x)
+        )
+    return f1
 
 class ReplayBuffer:
     def __init__(self, size):

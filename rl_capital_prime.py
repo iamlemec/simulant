@@ -12,7 +12,7 @@ from rl_tools import RandomState, logit, rectify_lower
 # rs = RandomState(42)
 
 # algo params
-N = 100 # capital grid size
+N = 1000 # capital grid size
 M = 3 # degree of valfunc polynomial
 ε = 1e-4 # utilty smoother
 
@@ -40,41 +40,39 @@ kmax = solve_binary(kmax_obj, 0.01, 100.0)
 klo, khi = 0.2*kss, 2*kss
 kgrid = np.linspace(klo, khi, N)
 
-# policy function
-def pol(k, θk):
-    x = (k-kss)**np.arange(M)
-    return np.dot(x, θk)
-pol_vec = jax.vmap(pol, in_axes=(0, None))
-
 # value function
-def val(k, θv):
+def val(k, θ):
     x = (k-kss)**np.arange(M)
-    return np.dot(x, θv)
-val_vec = jax.vmap(val, in_axes=(0, None))
+    return np.sum(x*θ)
 
-# evaluate policy/valfunc pair
-def eval_policy(k, θk, θv):
+# evaluate policy level
+def eval_policy(k, kp, θ):
     yp = f(k) + (1-δ)*k
-    kp, vp = np.maximum(0, pol(k, θk)), val(k, θv)
+    vp = val(kp, θ)
     return u(yp-kp) + β*vp
-eval_policy_vec = jax.jit(jax.vmap(eval_policy, in_axes=(0, None, None)))
-grad_policy_vec = jax.jit(jax.vmap(jax.grad(eval_policy, argnums=1), in_axes=(0, None, None)))
 
-def grad_policy_obj(θk, θv):
-    return -grad_policy_vec(kgrid, θk, θv).mean(axis=0)
-
-# evaluate fit of value function projection
-def eval_value(k, θk, θv):
-    vp = val(k, θv)
-    vn = eval_policy(k, θk, θv)
+# evaluate valfunc fit
+def eval_value(k, kp, θ):
+    vp = val(k, θ)
+    vn = eval_policy(k, kp, θ)
     return -(vn-vp)**2
-eval_value_vec = jax.jit(jax.vmap(eval_value, in_axes=(0, None, None)))
-eval_value_vec = jax.jit(jax.vmap(jax.grad(eval_value, argnums=2), in_axes=(0, None, None)))
 
-def grad_value_obj(θk, θv):
-    return -eval_value_vec(kgrid, θk, θv).mean(axis=0)
+# vectorized values
+val_vec = jax.vmap(val, in_axes=(0, None))
+eval_policy_vec = jax.vmap(eval_policy, in_axes=(0, 0, None))
+eval_value_vec = jax.vmap(eval_value, in_axes=(0, 0, None))
 
-def solve_iterate(R=10, Δk=0.01, Δv=0.01, ϵk=1e-4, ϵv=1e-4, Mk=100, Mv=100):
+# vectorized grads
+grad_policy_vec = jax.vmap(jax.grad(eval_policy, argnums=1), in_axes=(0, 0, None))
+grad_value_vec = jax.vmap(jax.grad(eval_value, argnums=2), in_axes=(0, 0, None))
+
+# applied to kgrid
+def grad_policy_obj(kp, θ):
+    return -grad_policy_vec(kgrid, kp, θ)
+def grad_value_obj(kp, θ):
+    return -grad_value_vec(kgrid, kp, θ).sum(axis=0)
+
+def solve_iterate(R=10, Δk=0.01, Δv=0.01, ϵk=1e-4, ϵv=1e-4, Mk=0.1, Mv=0.1):
     # custom optimizers
     optim_k = optax.chain(
         optax.clip(Mk), optax.scale_by_adam(eps=ϵk), optax.scale(-Δk)
@@ -100,8 +98,8 @@ def solve_iterate(R=10, Δk=0.01, Δv=0.01, ϵk=1e-4, ϵv=1e-4, Mk=100, Mv=100):
         return kpoly, theta, state_k, state_v
 
     # init params
-    kpoly = np.array([5.0, 0.1, 0.0])
-    theta = np.array([0.0, 1.0, 0.0])
+    kpoly = kgrid.copy()
+    theta = np.zeros(M)
 
     # init optimizers
     state_k = optim_k.init(kpoly)

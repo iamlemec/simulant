@@ -70,7 +70,7 @@ grad_value_vec = jax.vmap(jax.grad(eval_value, argnums=2), in_axes=(0, 0, None))
 def grad_policy_obj(kp, θ):
     return -grad_policy_vec(kgrid, kp, θ)
 def grad_value_obj(kp, θ):
-    return -grad_value_vec(kgrid, kp, θ).sum(axis=0)
+    return -grad_value_vec(kgrid, kp, θ).mean(axis=0)
 
 def solve_iterate(R=10, Δk=0.01, Δv=0.01, ϵk=1e-4, ϵv=1e-4, Mk=0.1, Mv=0.1):
     # custom optimizers

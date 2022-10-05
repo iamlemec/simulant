@@ -18,44 +18,33 @@ M = 3 # degree of valfunc polynomial
 
 # parameters
 β = 0.95 # discount rate
-α = 0.65 # cobb-douglas factor (capital)
-δ = 0.10 # depreciation rate
-z = 0.50 # productivity
+α = 1.00 # movement cost
 
 # functions
-u = rectify_lower(np.log, ε)
-f = lambda k: z*k**α
+u = lambda x: -0.5*x**2
+c = lambda d: -0.5*α*(d**2)
 up = jax.grad(u)
-fp = jax.grad(f)
+cp = jax.grad(c)
 
-# steady state
-kss_obj = lambda k: 1 - β * ( fp(k) + (1-δ) )
-kss = solve_binary(kss_obj, 0.01, 100.0)
-
-# get max reasonable
-kmax_obj = lambda k: fp(k) - δ
-kmax = solve_binary(kmax_obj, 0.01, 100.0)
-
-# make capital grid
-klo, khi = 0.2*kss, 2.0*kss
-kgrid = np.linspace(klo, khi, N)
+# make state grid
+xlo, xhi = -2.0, 2.0
+xgrid = np.linspace(xlo, xhi, N)
 
 # policy and value functions
-pol = polynomial(M, kss)
-val = polynomial(M, kss)
+pol = polynomial(M)
+val = polynomial(M)
 
 # evaluate policy level
-def eval_policy(k, θk, θv):
-    yp = f(k) + (1-δ)*k
-    kp = pol(k, θk)
-    vp = val(kp, θv)
-    up = u(yp-kp)
+def eval_policy(x, θp, θv):
+    xp = pol(x, θp)
+    vp = val(xp, θv)
+    up = u(x) + c(xp-x)
     return up + β*vp
 
 # evaluate valfunc fit
-def eval_value(k, θk, θv):
-    vp = val(k, θv)
-    vn = eval_policy(k, θk, θv)
+def eval_value(x, θp, θv):
+    vp = val(x, θv)
+    vn = eval_policy(x, θp, θv)
     return -(vn-vp)**2
 
 # vectorized values
@@ -70,41 +59,41 @@ grad_value_vec = jax.vmap(jax.grad(eval_value, argnums=2), in_axes=(0, None, Non
 
 # applied to kgrid
 def grad_policy_obj(θk, θv):
-    return grad_policy_vec(kgrid, θk, θv).mean(axis=0)
+    return grad_policy_vec(xgrid, θk, θv).mean(axis=0)
 def grad_value_obj(θk, θv):
-    return grad_value_vec(kgrid, θk, θv).mean(axis=0)
+    return grad_value_vec(xgrid, θk, θv).mean(axis=0)
 
-def solve_iterate(R=1000, Δk=0.01, Δv=0.01, ϵk=1e-4, ϵv=1e-4, Mk=0.1, Mv=0.1):
+def solve_iterate(R=1000, Δp=0.01, Δv=0.01, Mp=0.1, Mv=0.1):
     # custom optimizers
-    optim_k = optax.chain(optax.clip(Mk), optax.scale(Δk))
+    optim_p = optax.chain(optax.clip(Mp), optax.scale(Δp))
     optim_v = optax.chain(optax.clip(Mv), optax.scale(Δv))
 
     @jax.jit
-    def step(θk, θv, state_k, state_v):
+    def step(θp, θv, state_p, state_v):
         # compute gradients
-        grad_k = grad_policy_obj(θk, θv)
-        grad_v = grad_value_obj(θk, θv)
+        grad_p = grad_policy_obj(θp, θv)
+        grad_v = grad_value_obj(θp, θv)
 
         # update states
-        upd_k, state_k = optim_k.update(grad_k, state_k)
+        upd_p, state_p = optim_p.update(grad_p, state_p)
         upd_v, state_v = optim_v.update(grad_v, state_v)
 
         # apply updates
-        θk = optax.apply_updates(θk, upd_k)
+        θp = optax.apply_updates(θp, upd_p)
         θv = optax.apply_updates(θv, upd_v)
 
-        return θk, θv, state_k, state_v
+        return θp, θv, state_p, state_v
 
     # init params
-    θk = 10**(-np.arange(M, dtype=np.float32))
+    θp = 10**(-np.arange(M, dtype=np.float32))
     θv = 10**(-np.arange(M, dtype=np.float32))
 
     # init optimizers
-    state_k = optim_k.init(θk)
+    state_p = optim_p.init(θp)
     state_v = optim_v.init(θv)
 
     # iterate and optimize
     for i in range(R):
-        θk, θv, state_k, state_v = step(θk, θv, state_k, state_v)
+        θp, θv, state_p, state_v = step(θp, θv, state_p, state_v)
 
-    return θk, θv
+    return θp, θv

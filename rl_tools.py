@@ -20,6 +20,23 @@ def rectify_lower(f, ε):
         )
     return f1
 
+def polynomial(order, zero=0.0):
+    def f(x, θ):
+        ivec = np.arange(order)
+        z = (x-zero)**ivec
+        return np.sum(z*θ)
+    return f
+
+# order = 4, clamped
+def chebyshev(xmin, xmax):
+    def f(x, θ):
+        zero = 0.5*(xmin+xmax)
+        z0 = 2*(x-zero)/(xmax-xmin)
+        z = np.clip(z0, -1, 1)
+        t = np.array([np.ones_like(z), z, 2*z**2 - 1])
+        return np.sum(t*θ)
+    return f
+
 class ReplayBuffer:
     def __init__(self, size):
         self.buffer = deque([], maxlen=size)

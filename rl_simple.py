@@ -13,26 +13,25 @@ from rl_tools import rectify_lower, polynomial, chebyshev
 
 # algo params
 N = 1000 # capital grid size
-M = 3 # degree of valfunc polynomial
 ε = 1e-4 # utilty smoother
 
 # parameters
 β = 0.95 # discount rate
-α = 1.00 # movement cost
+α = 0.00 # movement cost
 
 # functions
-u = lambda x: -0.5*x**2
+u = rectify_lower(lambda x: -0.5*(np.log(x)**2), ε)
 c = lambda d: -0.5*α*(d**2)
 up = jax.grad(u)
 cp = jax.grad(c)
 
 # make state grid
-xlo, xhi = -2.0, 2.0
+xlo, xhi = 0.5, 2.0
 xgrid = np.linspace(xlo, xhi, N)
 
 # policy and value functions
-pol = polynomial(M)
-val = polynomial(M)
+pol = polynomial(4, zero=0.0)
+val = polynomial(4, zero=0.0)
 
 # evaluate policy level
 def eval_policy(x, θp, θv):
@@ -85,8 +84,8 @@ def solve_iterate(R=1000, Δp=0.01, Δv=0.01, Mp=0.1, Mv=0.1):
         return θp, θv, state_p, state_v
 
     # init params
-    θp = 10**(-np.arange(M, dtype=np.float32))
-    θv = 10**(-np.arange(M, dtype=np.float32))
+    θp = np.array([1.0, 0.0, 0.0, 0.0])
+    θv = np.array([-1.0, 2.0, -1.0, 0.0])
 
     # init optimizers
     state_p = optim_p.init(θp)

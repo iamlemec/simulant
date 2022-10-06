@@ -37,6 +37,23 @@ def chebyshev(xmin, xmax):
         return np.sum(t*θ)
     return f
 
+def cheb(x, d):
+    if d == 0:
+        return 1.0
+    elif d == 1:
+        return x
+    else:
+        return 2*x*cheb(x, d-1) - cheb(x, d-2)
+
+def chebyshev(M, xmin, xmax):
+    def f(x, θ):
+        zero = 0.5*(xmin+xmax)
+        z0 = 2*(x-zero)/(xmax-xmin)
+        z = np.clip(z0, -1, 1)
+        t = np.array([cheb(z, d) for d in range(M)])
+        return np.sum(t*θ)
+    return f
+
 class ReplayBuffer:
     def __init__(self, size):
         self.buffer = deque([], maxlen=size)

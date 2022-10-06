@@ -13,6 +13,7 @@ from rl_tools import rectify_lower, polynomial, chebyshev
 
 # algo params
 N = 1000 # capital grid size
+M = 4 # approximation order
 ε = 1e-4 # utilty smoother
 
 # parameters
@@ -30,8 +31,10 @@ xlo, xhi = 0.5, 2.0
 xgrid = np.linspace(xlo, xhi, N)
 
 # policy and value functions
-pol = polynomial(4, zero=0.0)
-val = polynomial(4, zero=0.0)
+pol = polynomial(M, zero=0.0)
+val = polynomial(M, zero=0.0)
+# pol = chebyshev(M, xlo, xhi)
+# val = chebyshev(M, xlo, xhi)
 
 # evaluate policy level
 def eval_policy(x, θp, θv):

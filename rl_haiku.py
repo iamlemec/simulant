@@ -1,9 +1,12 @@
 import jax
 import jax.numpy as np
+import jax.tree_util as trees
 import jax.lax as lax
 import jax.nn as nn
 import haiku as hk
 import optax
+
+import valjax as vj
 
 # algo
 N = 21 # grid size
@@ -25,7 +28,7 @@ ugrid = np.stack([
 
 # functions
 u = lambda x: 1 - x**2
-c = 0.1*(1/N)*np.array([1.0, 0.0, 1.0])
+c = 1.0*(1/N)*np.array([1.0, 0.0, 1.0])
 
 # expanded
 grid1 = grid[:, None].copy()
@@ -34,6 +37,7 @@ ugrid1 = ugrid[:, :, None].copy()
 # value function: position → value
 def val(x):
     mlp = hk.Sequential([
+        hk.Linear(K), nn.relu,
         hk.Linear(K), nn.relu,
         hk.Linear(K), nn.relu,
         hk.Linear(1)
@@ -45,37 +49,44 @@ def val(x):
 fval = hk.without_apply_rng(hk.transform(val))
 θval0 = fval.init(rng, grid1)
 
+# get squeezed values
+def get_value(θval, grid):
+    return fval.apply(θval, grid).squeeze(axis=-1)
+
+# find optimal policy
+def max_policy(θval):
+    vp = get_value(θval, ugrid1)
+    xs = vp.argmax(axis=1)
+    return xs
+
 # generate expected value
 def eval_policy(θval1, θval2):
-    vp1 = fval.apply(θval1, ugrid1)[:, :, 0]
-    vp2 = fval.apply(θval2, ugrid1)[:, :, 0]
-    xs = vp2.argmax(axis=1)
-    vs = vp1[np.arange(N), xs]
+    vp = get_value(θval1, ugrid1)
+    xs = max_policy(θval2)
+    vs = vj.address(vp, xs, axis=1)
     vn = u(grid) - c[xs] + β*vs
     return vn
 
 # evaluate valfunc fit
-def eval_value(θval1, θval2):
-    vp = fval.apply(θval1, grid1)[:, 0]
-    vn = eval_policy(θval1, θval2)
-    return -optax.l2_loss(vn, vp).mean()
-grad_value = jax.grad(value_obj)
+def eval_value(θval, val):
+    vtarg = get_value(θval, grid1)
+    return -optax.l2_loss(val, vtarg).mean()
+grad_value = jax.grad(eval_value)
 
-def solve_iterate(R=1000, Δval=0.01, εval=1e-4, Mval=0.1):
+def solve_iterate(R=1000, Δval=0.01, Mval=0.1, τ=0.01):
     # custom optimizers
-    optim_val = optax.chain(
-        optax.clip(Mval), optax.scale_by_adam(eps=εval), optax.scale(Δval)
-    )
+    optim_val = optax.chain(optax.clip(Mval), optax.scale(Δval))
 
     @jax.jit
     def step(θval1, θval2, state_val):
         # update value function
-        grad_val = grad_value(θval1, θval2)
+        targ_val = eval_policy(θval1, θval2)
+        grad_val = grad_value(θval1, targ_val)
         upd_val, state_val = optim_val.update(grad_val, state_val)
         θval1 = optax.apply_updates(θval1, upd_val)
 
         # update value target
-        θval2 = τ*θval1 + (1-τ)*θval2
+        θval2 = trees.tree_map(lambda t1, t2: τ*t1 + (1-τ)*t2, θval1, θval2)
 
         return θval1, θval2, state_val
 
@@ -84,10 +95,10 @@ def solve_iterate(R=1000, Δval=0.01, εval=1e-4, Mval=0.1):
     θval2 = θval0
 
     # init optimizers
-    state_val = optim_val.init(θval)
+    state_val = optim_val.init(θval1)
 
     # iterate and optimize
     for i in range(R):
         θval1, θval2, state_val = step(θval1, θval2, state_val)
 
-    return θval
+    return θval1
